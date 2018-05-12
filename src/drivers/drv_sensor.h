@@ -103,6 +103,9 @@
 #define DRV_ACC_DEVTYPE_ADIS16448	0x55
 #define DRV_MAG_DEVTYPE_ADIS16448	0x56
 #define DRV_GYR_DEVTYPE_ADIS16448	0x57
+#define DRV_BARO_DEVTYPE_LPS22HB	0x58
+#define DRV_ACC_DEVTYPE_ADIS16477	0x59
+#define DRV_GYR_DEVTYPE_ADIS16477	0x60
 
 /*
  * ioctl() definitions
@@ -139,27 +142,9 @@
  */
 #define SENSORIOCSQUEUEDEPTH	_SENSORIOC(2)
 
-/** return the internal queue depth */
-#define SENSORIOCGQUEUEDEPTH	_SENSORIOC(3)
-
 /**
  * Reset the sensor to its default configuration
  */
 #define SENSORIOCRESET		_SENSORIOC(4)
-
-/**
- * Set the sensor orientation
- */
-#define SENSORIOCSROTATION	_SENSORIOC(5)
-
-/**
- * Get the sensor orientation
- */
-#define SENSORIOCGROTATION	_SENSORIOC(6)
-
-/**
- * Test the sensor calibration
- */
-#define SENSORIOCCALTEST	_SENSORIOC(7)
 
 #endif /* _DRV_SENSOR_H */

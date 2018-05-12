@@ -137,6 +137,18 @@ PARAM_DEFINE_FLOAT(EKF2_ASP_DELAY, 100);
 PARAM_DEFINE_FLOAT(EKF2_EV_DELAY, 175);
 
 /**
+ * Auxillary Velocity Estimate (e.g from a landing target) delay relative to IMU measurements
+ *
+ * @group EKF2
+ * @min 0
+ * @max 300
+ * @unit ms
+ * @reboot_required true
+ * @decimal 1
+ */
+PARAM_DEFINE_FLOAT(EKF2_AVEL_DELAY, 5);
+
+/**
  * Integer bitmask controlling GPS checks.
  *
  * Set bits to 1 to enable checks. Checks enabled by the following bit positions
@@ -595,6 +607,17 @@ PARAM_DEFINE_INT32(EKF2_AID_MASK, 1);
 PARAM_DEFINE_INT32(EKF2_HGT_MODE, 0);
 
 /**
+ * Maximum lapsed time from last fusion of measurements that constrain velocity drift before the EKF will report the horizontal nav solution as invalid.
+ *
+ * @group EKF2
+ * @group EKF2
+ * @min 500000
+ * @max 10000000
+ * @unit uSec
+ */
+PARAM_DEFINE_INT32(EKF2_NOAID_TOUT, 5000000);
+
+/**
  * Measurement noise for range finder fusion
  *
  * @group EKF2
@@ -716,7 +739,8 @@ PARAM_DEFINE_INT32(EKF2_OF_QMIN, 1);
 PARAM_DEFINE_FLOAT(EKF2_OF_GATE, 3.0f);
 
 /**
- * Optical Flow data will not fused if the magnitude of the flow rate > EKF2_OF_RMAX
+ * Optical Flow data will not fused if the magnitude of the flow rate > EKF2_OF_RMAX.
+ * Control loops will be instructed to limit ground speed such that the flow rate produced by movement over ground is less than 50% of EKF2_OF_RMAX.
  *
  * @group EKF2
  * @min 1.0
@@ -882,7 +906,9 @@ PARAM_DEFINE_FLOAT(EKF2_EV_POS_Z, 0.0f);
 
 /**
 * Airspeed fusion threshold. A value of zero will deactivate airspeed fusion. Any other positive
-* value will determine the minimum airspeed which will still be fused.
+* value will determine the minimum airspeed which will still be fused. Set to about 90% of the vehicles stall speed.
+* Both airspeed fusion and sideslip fusion must be active for the EKF to continue navigating after loss of GPS.
+* Use EKF2_FUSE_BETA to activate sideslip fusion.
 *
 * @group EKF2
 * @min 0.0
@@ -895,6 +921,8 @@ PARAM_DEFINE_FLOAT(EKF2_ARSP_THR, 0.0f);
 * Boolean determining if synthetic sideslip measurements should fused.
 *
 * A value of 1 indicates that fusion is active
+* Both  sideslip fusion and airspeed fusion must be active for the EKF to continue navigating after loss of GPS.
+* Use EKF2_ARSP_THR to activate airspeed fusion.
 *
 * @group EKF2
 * @boolean
@@ -978,6 +1006,8 @@ PARAM_DEFINE_FLOAT(EKF2_RNG_PITCH, 0.0f);
  * @min -0.5
  * @max 0.5
  * @reboot_required true
+ * @volatile
+ * @category system
  * @unit mGauss
  * @decimal 3
  */
@@ -991,6 +1021,8 @@ PARAM_DEFINE_FLOAT(EKF2_MAGBIAS_X, 0.0f);
  * @min -0.5
  * @max 0.5
  * @reboot_required true
+ * @volatile
+ * @category system
  * @unit mGauss
  * @decimal 3
  */
@@ -1004,6 +1036,8 @@ PARAM_DEFINE_FLOAT(EKF2_MAGBIAS_Y, 0.0f);
  * @min -0.5
  * @max 0.5
  * @reboot_required true
+ * @volatile
+ * @category system
  * @unit mGauss
  * @decimal 3
  */
@@ -1014,6 +1048,7 @@ PARAM_DEFINE_FLOAT(EKF2_MAGBIAS_Z, 0.0f);
  *
  * @group EKF2
  * @reboot_required true
+ * @category system
  */
 PARAM_DEFINE_INT32(EKF2_MAGBIAS_ID, 0);
 

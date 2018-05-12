@@ -68,10 +68,10 @@
 #include <drivers/drv_mixer.h>
 
 #include <lib/mixer/mixer.h>
-#include <systemlib/perf_counter.h>
+#include <perf/perf_counter.h>
 #include <systemlib/err.h>
 #include <systemlib/systemlib.h>
-#include <systemlib/param/param.h>
+#include <parameters/param.h>
 #include <systemlib/circuit_breaker.h>
 #include <systemlib/mavlink_log.h>
 
@@ -268,9 +268,6 @@ private:
 	orb_advert_t		_to_servorail;		///< servorail status
 	orb_advert_t		_to_safety;		///< status of safety
 	orb_advert_t 		_to_mixer_status; 	///< mixer status flags
-
-	actuator_outputs_s	_outputs;		///< mixed outputs
-	servorail_status_s	_servorail_status;	///< servorail status
 
 	bool			_primary_pwm_device;	///< true if we are the default PWM output
 	bool			_lockdown_override;	///< allow to override the safety lockdown
@@ -471,7 +468,7 @@ PX4IO::PX4IO(device::Device *interface) :
 	_mavlink_log_pub(nullptr),
 	_perf_update(perf_alloc(PC_ELAPSED, "io update")),
 	_perf_write(perf_alloc(PC_ELAPSED, "io write")),
-	_perf_sample_latency(perf_alloc(PC_ELAPSED, "io latency")),
+	_perf_sample_latency(perf_alloc(PC_ELAPSED, "io control latency")),
 	_status(0),
 	_alarms(0),
 	_last_written_arming_s(0),
@@ -490,8 +487,6 @@ PX4IO::PX4IO(device::Device *interface) :
 	_to_servorail(nullptr),
 	_to_safety(nullptr),
 	_to_mixer_status(nullptr),
-	_outputs{},
-	_servorail_status{},
 	_primary_pwm_device(false),
 	_lockdown_override(false),
 	_armed(false),
@@ -508,9 +503,6 @@ PX4IO::PX4IO(device::Device *interface) :
 {
 	/* we need this potentially before it could be set in task_main */
 	g_dev = this;
-
-	_debug_enabled = false;
-	_servorail_status.rssi_v = 0;
 }
 
 PX4IO::~PX4IO()
@@ -589,8 +581,6 @@ PX4IO::init()
 	int ret;
 	param_t sys_restart_param;
 	int32_t sys_restart_val = DM_INIT_REASON_VOLATILE;
-
-	ASSERT(_task == -1);
 
 	sys_restart_param = param_find("SYS_RESTART_TYPE");
 
@@ -1221,6 +1211,15 @@ PX4IO::task_main()
 					param_get(parm_handle, &param_val);
 					(void)io_reg_set(PX4IO_PAGE_SETUP, PX4IO_P_SETUP_MOTOR_SLEW_MAX, FLOAT_TO_REG(param_val));
 				}
+
+				/* air-mode */
+				parm_handle = param_find("MC_AIRMODE");
+
+				if (parm_handle != PARAM_INVALID) {
+					int32_t param_val_int;
+					param_get(parm_handle, &param_val_int);
+					(void)io_reg_set(PX4IO_PAGE_SETUP, PX4IO_P_SETUP_AIRMODE, SIGNED_TO_REG(param_val_int));
+				}
 			}
 
 		}
@@ -1679,17 +1678,19 @@ PX4IO::io_handle_alarms(uint16_t alarms)
 void
 PX4IO::io_handle_vservo(uint16_t vservo, uint16_t vrssi)
 {
-	_servorail_status.timestamp = hrt_absolute_time();
+	servorail_status_s servorail_status = {};
+
+	servorail_status.timestamp = hrt_absolute_time();
 
 	/* voltage is scaled to mV */
-	_servorail_status.voltage_v = vservo * 0.001f;
-	_servorail_status.rssi_v    = vrssi * 0.001f;
+	servorail_status.voltage_v = vservo * 0.001f;
+	servorail_status.rssi_v    = vrssi * 0.001f;
 
 	if (_analog_rc_rssi_volt < 0.0f) {
-		_analog_rc_rssi_volt = _servorail_status.rssi_v;
+		_analog_rc_rssi_volt = servorail_status.rssi_v;
 	}
 
-	_analog_rc_rssi_volt = _analog_rc_rssi_volt * 0.99f + _servorail_status.rssi_v * 0.01f;
+	_analog_rc_rssi_volt = _analog_rc_rssi_volt * 0.99f + servorail_status.rssi_v * 0.01f;
 
 	if (_analog_rc_rssi_volt > 2.5f) {
 		_analog_rc_rssi_stable = true;
@@ -1697,10 +1698,10 @@ PX4IO::io_handle_vservo(uint16_t vservo, uint16_t vrssi)
 
 	/* lazily publish the servorail voltages */
 	if (_to_servorail != nullptr) {
-		orb_publish(ORB_ID(servorail_status), _to_servorail, &_servorail_status);
+		orb_publish(ORB_ID(servorail_status), _to_servorail, &servorail_status);
 
 	} else {
-		_to_servorail = orb_advertise(ORB_ID(servorail_status), &_servorail_status);
+		_to_servorail = orb_advertise(ORB_ID(servorail_status), &servorail_status);
 	}
 }
 
@@ -2746,10 +2747,6 @@ PX4IO::ioctl(file *filep, int cmd, unsigned long arg)
 		ret = -EINVAL;
 		break;
 
-	case GPIO_GET:
-		ret = -EINVAL;
-		break;
-
 	case MIXERIOCGETOUTPUTCOUNT:
 		*(unsigned *)arg = _max_actuators;
 		break;
@@ -2761,44 +2758,6 @@ PX4IO::ioctl(file *filep, int cmd, unsigned long arg)
 	case MIXERIOCLOADBUF: {
 			const char *buf = (const char *)arg;
 			ret = mixer_send(buf, strnlen(buf, 2048));
-			break;
-		}
-
-	case RC_INPUT_GET: {
-			uint16_t status;
-			rc_input_values *rc_val = (rc_input_values *)arg;
-
-			ret = io_reg_get(PX4IO_PAGE_STATUS, PX4IO_P_STATUS_FLAGS, &status, 1);
-
-			if (ret != OK) {
-				break;
-			}
-
-			/* if no R/C input, don't try to fetch anything */
-			if (!(status & PX4IO_P_STATUS_FLAGS_RC_OK)) {
-				ret = -ENOTCONN;
-				break;
-			}
-
-			/* sort out the source of the values */
-			if (status & PX4IO_P_STATUS_FLAGS_RC_PPM) {
-				rc_val->input_source = input_rc_s::RC_INPUT_SOURCE_PX4IO_PPM;
-
-			} else if (status & PX4IO_P_STATUS_FLAGS_RC_DSM) {
-				rc_val->input_source = input_rc_s::RC_INPUT_SOURCE_PX4IO_SPEKTRUM;
-
-			} else if (status & PX4IO_P_STATUS_FLAGS_RC_SBUS) {
-				rc_val->input_source = input_rc_s::RC_INPUT_SOURCE_PX4IO_SBUS;
-
-			} else if (status & PX4IO_P_STATUS_FLAGS_RC_ST24) {
-				rc_val->input_source = input_rc_s::RC_INPUT_SOURCE_PX4IO_ST24;
-
-			} else {
-				rc_val->input_source = input_rc_s::RC_INPUT_SOURCE_UNKNOWN;
-			}
-
-			/* read raw R/C input values */
-			ret = io_reg_get(PX4IO_PAGE_RAW_RC_INPUT, PX4IO_P_RAW_RC_BASE, &(rc_val->values[0]), _max_rc_input);
 			break;
 		}
 
@@ -2882,47 +2841,6 @@ PX4IO::ioctl(file *filep, int cmd, unsigned long arg)
 					    (PX4IO_P_SETUP_FEATURES_SBUS1_OUT | PX4IO_P_SETUP_FEATURES_SBUS2_OUT), 0);
 		}
 
-		break;
-
-	case PWM_SERVO_SET_RC_CONFIG: {
-			/* enable setting of RC configuration without relying
-			   on param_get()
-			*/
-			struct pwm_output_rc_config *config = (struct pwm_output_rc_config *)arg;
-
-			if (config->channel >= input_rc_s::RC_INPUT_MAX_CHANNELS) {
-				/* fail with error */
-				return -E2BIG;
-			}
-
-			/* copy values to registers in IO */
-			uint16_t regs[PX4IO_P_RC_CONFIG_STRIDE];
-			uint16_t offset = config->channel * PX4IO_P_RC_CONFIG_STRIDE;
-			regs[PX4IO_P_RC_CONFIG_MIN]        = config->rc_min;
-			regs[PX4IO_P_RC_CONFIG_CENTER]     = config->rc_trim;
-			regs[PX4IO_P_RC_CONFIG_MAX]        = config->rc_max;
-			regs[PX4IO_P_RC_CONFIG_DEADZONE]   = config->rc_dz;
-			regs[PX4IO_P_RC_CONFIG_ASSIGNMENT] = config->rc_assignment;
-			regs[PX4IO_P_RC_CONFIG_OPTIONS]    = PX4IO_P_RC_CONFIG_OPTIONS_ENABLED;
-
-			if (config->rc_reverse) {
-				regs[PX4IO_P_RC_CONFIG_OPTIONS] |= PX4IO_P_RC_CONFIG_OPTIONS_REVERSE;
-			}
-
-			ret = io_reg_set(PX4IO_PAGE_RC_CONFIG, offset, regs, PX4IO_P_RC_CONFIG_STRIDE);
-			break;
-		}
-
-	case PWM_SERVO_SET_OVERRIDE_OK:
-		/* set the 'OVERRIDE OK' bit */
-		ret = io_reg_modify(PX4IO_PAGE_SETUP, PX4IO_P_SETUP_ARMING, 0, PX4IO_P_SETUP_ARMING_MANUAL_OVERRIDE_OK);
-		_override_available = true;
-		break;
-
-	case PWM_SERVO_CLEAR_OVERRIDE_OK:
-		/* clear the 'OVERRIDE OK' bit */
-		ret = io_reg_modify(PX4IO_PAGE_SETUP, PX4IO_P_SETUP_ARMING, PX4IO_P_SETUP_ARMING_MANUAL_OVERRIDE_OK, 0);
-		_override_available = false;
 		break;
 
 	default:

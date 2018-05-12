@@ -52,7 +52,7 @@
 #include <errno.h>
 
 #include <systemlib/err.h>
-#include <systemlib/perf_counter.h>
+#include <perf/perf_counter.h>
 #include <systemlib/mavlink_log.h>
 
 #include <drivers/drv_hrt.h>
@@ -69,14 +69,13 @@
 #include <mpu9250/MPU9250.hpp>
 #include <DevMgr.hpp>
 
-// We don't want to auto publish, therefore set this to 0.
-#define MPU9250_NEVER_AUTOPUBLISH_US 0
-
 #define MPU9250_ACCEL_DEFAULT_RATE 1000
 #define MPU9250_GYRO_DEFAULT_RATE 1000
 
 #define MPU9250_ACCEL_DEFAULT_DRIVER_FILTER_FREQ 30
 #define MPU9250_GYRO_DEFAULT_DRIVER_FILTER_FREQ 30
+
+#define MPU9250_PUB_RATE 250
 
 
 extern "C" { __EXPORT int df_mpu9250_wrapper_main(int argc, char *argv[]); }
@@ -198,8 +197,8 @@ DfMpu9250Wrapper::DfMpu9250Wrapper(bool mag_enabled, enum Rotation rotation) :
 	_accel_orb_class_instance(-1),
 	_gyro_orb_class_instance(-1),
 	_mag_orb_class_instance(-1),
-	_accel_int(MPU9250_NEVER_AUTOPUBLISH_US, false),
-	_gyro_int(MPU9250_NEVER_AUTOPUBLISH_US, true),
+	_accel_int(1000000 / MPU9250_PUB_RATE, false),
+	_gyro_int(1000000 / MPU9250_PUB_RATE, true),
 	_accel_filter_x(MPU9250_ACCEL_DEFAULT_RATE, MPU9250_ACCEL_DEFAULT_DRIVER_FILTER_FREQ),
 	_accel_filter_y(MPU9250_ACCEL_DEFAULT_RATE, MPU9250_ACCEL_DEFAULT_DRIVER_FILTER_FREQ),
 	_accel_filter_z(MPU9250_ACCEL_DEFAULT_RATE, MPU9250_ACCEL_DEFAULT_DRIVER_FILTER_FREQ),
@@ -242,6 +241,31 @@ DfMpu9250Wrapper::DfMpu9250Wrapper(bool mag_enabled, enum Rotation rotation) :
 		_mag_calibration.x_offset = 0.0f;
 		_mag_calibration.y_offset = 0.0f;
 		_mag_calibration.z_offset = 0.0f;
+	}
+
+	// set software low pass filter for controllers
+	param_t param_handle = param_find("IMU_ACCEL_CUTOFF");
+	float param_val = MPU9250_ACCEL_DEFAULT_DRIVER_FILTER_FREQ;
+
+	if (param_handle != PARAM_INVALID && (param_get(param_handle, &param_val) == PX4_OK)) {
+		_accel_filter_x.set_cutoff_frequency(MPU9250_ACCEL_DEFAULT_RATE, param_val);
+		_accel_filter_y.set_cutoff_frequency(MPU9250_ACCEL_DEFAULT_RATE, param_val);
+		_accel_filter_z.set_cutoff_frequency(MPU9250_ACCEL_DEFAULT_RATE, param_val);
+
+	} else {
+		PX4_ERR("IMU_ACCEL_CUTOFF param invalid");
+	}
+
+	param_handle = param_find("IMU_GYRO_CUTOFF");
+	param_val = MPU9250_GYRO_DEFAULT_DRIVER_FILTER_FREQ;
+
+	if (param_handle != PARAM_INVALID && (param_get(param_handle, &param_val) == PX4_OK)) {
+		_gyro_filter_x.set_cutoff_frequency(MPU9250_GYRO_DEFAULT_RATE, param_val);
+		_gyro_filter_y.set_cutoff_frequency(MPU9250_GYRO_DEFAULT_RATE, param_val);
+		_gyro_filter_z.set_cutoff_frequency(MPU9250_GYRO_DEFAULT_RATE, param_val);
+
+	} else {
+		PX4_ERR("IMU_GYRO_CUTOFF param invalid");
 	}
 }
 
@@ -599,17 +623,18 @@ int DfMpu9250Wrapper::_publish(struct imu_sensor_data &data)
 
 	// ACCEL
 
-	// write raw data (without rotation)
-	accel_report.x_raw = data.accel_m_s2_x;
-	accel_report.y_raw = data.accel_m_s2_y;
-	accel_report.z_raw = data.accel_m_s2_z;
-
 	float xraw_f = data.accel_m_s2_x;
 	float yraw_f = data.accel_m_s2_y;
 	float zraw_f = data.accel_m_s2_z;
 
 	// apply user specified rotation
 	rotate_3f(_rotation, xraw_f, yraw_f, zraw_f);
+
+	// MPU9250 driver from DriverFramework does not provide any raw values
+	// TEMP We misuse the raw values on the Snapdragon to publish unfiltered data for VISLAM
+	accel_report.x_raw = (int16_t)(xraw_f * 1000); // (int16) [m / s^2 * 1000];
+	accel_report.y_raw = (int16_t)(yraw_f * 1000); // (int16) [m / s^2 * 1000];
+	accel_report.z_raw = (int16_t)(zraw_f * 1000); // (int16) [m / s^2 * 1000];
 
 	// adjust values according to the calibration
 	float x_in_new = (xraw_f - _accel_calibration.x_offset) * _accel_calibration.x_scale;
@@ -620,8 +645,8 @@ int DfMpu9250Wrapper::_publish(struct imu_sensor_data &data)
 	accel_report.y = _accel_filter_y.apply(y_in_new);
 	accel_report.z = _accel_filter_z.apply(z_in_new);
 
-	math::Vector<3> aval(x_in_new, y_in_new, z_in_new);
-	math::Vector<3> aval_integrated;
+	matrix::Vector3f aval(x_in_new, y_in_new, z_in_new);
+	matrix::Vector3f aval_integrated;
 
 	_accel_int.put(accel_report.timestamp, aval, aval_integrated, accel_report.integral_dt);
 	accel_report.x_integral = aval_integrated(0);
@@ -630,17 +655,18 @@ int DfMpu9250Wrapper::_publish(struct imu_sensor_data &data)
 
 	// GYRO
 
-	// write raw data (withoud rotation)
-	gyro_report.x_raw = data.gyro_rad_s_x;
-	gyro_report.y_raw = data.gyro_rad_s_y;
-	gyro_report.z_raw = data.gyro_rad_s_z;
-
 	xraw_f = data.gyro_rad_s_x;
 	yraw_f = data.gyro_rad_s_y;
 	zraw_f = data.gyro_rad_s_z;
 
 	// apply user specified rotation
 	rotate_3f(_rotation, xraw_f, yraw_f, zraw_f);
+
+	// MPU9250 driver from DriverFramework does not provide any raw values
+	// TEMP We misuse the raw values on the Snapdragon to publish unfiltered data for VISLAM
+	gyro_report.x_raw = (int16_t)(xraw_f * 1000); // (int16) [rad / s * 1000];
+	gyro_report.y_raw = (int16_t)(yraw_f * 1000); // (int16) [rad / s * 1000];
+	gyro_report.z_raw = (int16_t)(zraw_f * 1000); // (int16) [rad / s * 1000];
 
 	// adjust values according to the calibration
 	float x_gyro_in_new = (xraw_f - _gyro_calibration.x_offset) * _gyro_calibration.x_scale;
@@ -651,8 +677,8 @@ int DfMpu9250Wrapper::_publish(struct imu_sensor_data &data)
 	gyro_report.y = _gyro_filter_y.apply(y_gyro_in_new);
 	gyro_report.z = _gyro_filter_z.apply(z_gyro_in_new);
 
-	math::Vector<3> gval(x_gyro_in_new, y_gyro_in_new, z_gyro_in_new);
-	math::Vector<3> gval_integrated;
+	matrix::Vector3f gval(x_gyro_in_new, y_gyro_in_new, z_gyro_in_new);
+	matrix::Vector3f gval_integrated;
 
 	_gyro_int.put(gyro_report.timestamp, gval, gval_integrated, gyro_report.integral_dt);
 	gyro_report.x_integral = gval_integrated(0);
@@ -706,15 +732,17 @@ int DfMpu9250Wrapper::_publish(struct imu_sensor_data &data)
 		mag_report.range_ga = -1.0f;
 		mag_report.device_id = m_id.dev_id;
 
-		mag_report.x_raw = 0;
-		mag_report.y_raw = 0;
-		mag_report.z_raw = 0;
-
 		xraw_f = data.mag_ga_x;
 		yraw_f = data.mag_ga_y;
 		zraw_f = data.mag_ga_z;
 
 		rotate_3f(_rotation, xraw_f, yraw_f, zraw_f);
+
+		// MPU9250 driver from DriverFramework does not provide any raw values
+		// TEMP We misuse the raw values on the Snapdragon to publish unfiltered data for VISLAM
+		mag_report.x_raw = xraw_f * 1000; // (int16) [Gs * 1000]
+		mag_report.y_raw = yraw_f * 1000; // (int16) [Gs * 1000]
+		mag_report.z_raw = zraw_f * 1000; // (int16) [Gs * 1000]
 
 		mag_report.x = (xraw_f - _mag_calibration.x_offset) * _mag_calibration.x_scale;
 		mag_report.y = (yraw_f - _mag_calibration.y_offset) * _mag_calibration.y_scale;

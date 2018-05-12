@@ -92,6 +92,19 @@ using namespace px4::logger;
 static void timer_callback(void *arg)
 {
 	px4_sem_t *semaphore = (px4_sem_t *)arg;
+
+	/* check the value of the semaphore: if the logger cannot keep up with running it's main loop as fast
+	 * as the timer_callback here increases the semaphore count, the counter would increase unbounded,
+	 * leading to an overflow at some point. This case we want to avoid here, so we check the current
+	 * value against a (somewhat arbitrary) threshold, and avoid calling sem_post() if it's exceeded.
+	 * (it's not a problem if the threshold is a bit too large, it just means the logger will do
+	 * multiple iterations at once, the next time it's scheduled). */
+	int semaphore_value;
+
+	if (px4_sem_getvalue(semaphore, &semaphore_value) == 0 && semaphore_value > 1) {
+		return;
+	}
+
 	px4_sem_post(semaphore);
 }
 
@@ -389,7 +402,7 @@ Logger::Logger(LogWriter::Backend backend, size_t buffer_size, uint32_t log_inte
 	_sdlog_profile_handle = param_find("SDLOG_PROFILE");
 
 	if (poll_topic_name) {
-		const orb_metadata **topics = orb_get_topics();
+		const orb_metadata *const*topics = orb_get_topics();
 
 		for (size_t i = 0; i < orb_topics_count(); i++) {
 			if (strcmp(poll_topic_name, topics[i]->o_name) == 0) {
@@ -465,7 +478,7 @@ LoggerSubscription* Logger::add_topic(const orb_metadata *topic)
 
 bool Logger::add_topic(const char *name, unsigned interval)
 {
-	const orb_metadata **topics = orb_get_topics();
+	const orb_metadata *const*topics = orb_get_topics();
 	LoggerSubscription *subscription = nullptr;
 
 	for (size_t i = 0; i < orb_topics_count(); i++) {
@@ -571,12 +584,6 @@ bool Logger::try_to_subscribe_topic(LoggerSubscription &sub, int multi_instance)
 
 void Logger::add_default_topics()
 {
-#ifdef CONFIG_ARCH_BOARD_SITL
-	add_topic("vehicle_attitude_groundtruth", 10);
-	add_topic("vehicle_global_position_groundtruth", 100);
-	add_topic("vehicle_local_position_groundtruth", 100);
-#endif
-
 	// Note: try to avoid setting the interval where possible, as it increases RAM usage
 	add_topic("actuator_controls_0", 100);
 	add_topic("actuator_controls_1", 100);
@@ -593,11 +600,14 @@ void Logger::add_default_topics()
 	add_topic("estimator_status", 200);
 	add_topic("home_position");
 	add_topic("input_rc", 200);
+	add_topic("landing_target_pose");
 	add_topic("manual_control_setpoint", 200);
+	add_topic("mission");
 	add_topic("mission_result");
-	add_topic("offboard_mission");
 	add_topic("optical_flow", 50);
 	add_topic("position_setpoint_triplet", 200);
+	add_topic("rate_ctrl_status", 30);
+	add_topic("safety");
 	add_topic("sensor_combined", 100);
 	add_topic("sensor_preflight", 200);
 	add_topic("system_power", 500);
@@ -618,6 +628,25 @@ void Logger::add_default_topics()
 	add_topic("vehicle_vision_position");
 	add_topic("vtol_vehicle_status", 200);
 	add_topic("wind_estimate", 200);
+	add_topic("timesync_status");
+
+#ifdef CONFIG_ARCH_BOARD_SITL
+	add_topic("actuator_armed");
+	add_topic("actuator_controls_virtual_fw");
+	add_topic("actuator_controls_virtual_mc");
+	add_topic("commander_state");
+	add_topic("fw_pos_ctrl_status");
+	add_topic("fw_virtual_attitude_setpoint");
+	add_topic("led_control");
+	add_topic("mc_virtual_attitude_setpoint");
+	add_topic("multirotor_motor_limits");
+	add_topic("offboard_control_mode");
+	add_topic("time_offset");
+	add_topic("vehicle_attitude_groundtruth", 10);
+	add_topic("vehicle_global_position_groundtruth", 100);
+	add_topic("vehicle_local_position_groundtruth", 100);
+	add_topic("vehicle_roi");
+#endif
 }
 
 void Logger::add_high_rate_topics()
@@ -626,6 +655,8 @@ void Logger::add_high_rate_topics()
 	add_topic("actuator_controls_0");
 	add_topic("actuator_outputs");
 	add_topic("manual_control_setpoint");
+	add_topic("rate_ctrl_status");
+	add_topic("sensor_combined");
 	add_topic("vehicle_attitude");
 	add_topic("vehicle_attitude_setpoint");
 	add_topic("vehicle_rates_setpoint");
@@ -647,11 +678,12 @@ void Logger::add_estimator_replay_topics()
 	add_topic("airspeed");
 	add_topic("distance_sensor");
 	add_topic("optical_flow");
-	add_topic("sensor_baro");
 	add_topic("sensor_combined");
 	add_topic("sensor_selection");
+	add_topic("vehicle_air_data");
 	add_topic("vehicle_gps_position");
 	add_topic("vehicle_land_detected");
+	add_topic("vehicle_magnetometer");
 	add_topic("vehicle_status");
 	add_topic("vehicle_vision_attitude");
 	add_topic("vehicle_vision_position");
@@ -924,9 +956,7 @@ void Logger::run()
 		if (ret == 0 && vehicle_status_updated) {
 			vehicle_status_s vehicle_status;
 			orb_copy(ORB_ID(vehicle_status), vehicle_status_sub, &vehicle_status);
-			bool armed = (vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) ||
-				     (vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED_ERROR) ||
-				     _arm_override;
+			bool armed = (vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) || _arm_override;
 
 			if (_was_armed != armed && !_log_until_shutdown) {
 				_was_armed = armed;
@@ -1592,7 +1622,7 @@ void Logger::write_formats()
 {
 	_writer.lock();
 	ulog_message_format_s msg = {};
-	const orb_metadata **topics = orb_get_topics();
+	const orb_metadata *const*topics = orb_get_topics();
 
 	//write all known formats
 	for (size_t i = 0; i < orb_topics_count(); i++) {
@@ -1747,9 +1777,8 @@ void Logger::write_header()
 	write_message(&header, sizeof(header));
 
 	// write the Flags message: this MUST be written right after the ulog header
-	ulog_message_flag_bits_s flag_bits;
+	ulog_message_flag_bits_s flag_bits{};
 
-	memset(&flag_bits, 0, sizeof(flag_bits));
 	flag_bits.msg_size = sizeof(flag_bits) - ULOG_MSG_HEADER_LEN;
 	flag_bits.msg_type = static_cast<uint8_t>(ULogMessageType::FLAG_BITS);
 
@@ -1770,6 +1799,11 @@ void Logger::write_version()
 	}
 
 	write_info("ver_hw", px4_board_name());
+	const char *board_sub_type = px4_board_sub_type();
+
+	if (board_sub_type && board_sub_type[0]) {
+		write_info("ver_hw_subtype", board_sub_type);
+	}
 	write_info("sys_name", "PX4");
 	write_info("sys_os_name", px4_os_name());
 	const char *os_version = px4_os_version_string();
@@ -1836,7 +1870,7 @@ void Logger::write_parameters()
 	param_t param = 0;
 
 	do {
-		// get next parameter which is invalid OR used
+		// skip over all parameters which are not invalid and not used
 		do {
 			param = param_for_index(param_idx);
 			++param_idx;
@@ -1844,7 +1878,7 @@ void Logger::write_parameters()
 
 		// save parameters which are valid AND used
 		if (param != PARAM_INVALID) {
-			/* get parameter type and size */
+			// get parameter type and size
 			const char *type_str;
 			param_type_t type = param_type(param);
 			size_t value_size = 0;
@@ -1864,11 +1898,11 @@ void Logger::write_parameters()
 				continue;
 			}
 
-			/* format parameter key (type and name) */
+			// format parameter key (type and name)
 			msg.key_len = snprintf(msg.key, sizeof(msg.key), "%s %s", type_str, param_name(param));
 			size_t msg_size = sizeof(msg) - sizeof(msg.key) + msg.key_len;
 
-			/* copy parameter value directly to buffer */
+			// copy parameter value directly to buffer
 			switch (type) {
 			case PARAM_TYPE_INT32:
 				param_get(param, (int32_t*)&buffer[msg_size]);
@@ -1904,7 +1938,7 @@ void Logger::write_changed_parameters()
 	param_t param = 0;
 
 	do {
-		// get next parameter which is invalid OR used
+		// skip over all parameters which are not invalid and not used
 		do {
 			param = param_for_index(param_idx);
 			++param_idx;
@@ -1913,7 +1947,7 @@ void Logger::write_changed_parameters()
 		// log parameters which are valid AND used AND unsaved
 		if ((param != PARAM_INVALID) && param_value_unsaved(param)) {
 
-			/* get parameter type and size */
+			// get parameter type and size
 			const char *type_str;
 			param_type_t type = param_type(param);
 			size_t value_size = 0;
@@ -1933,11 +1967,11 @@ void Logger::write_changed_parameters()
 				continue;
 			}
 
-			/* format parameter key (type and name) */
+			// format parameter key (type and name)
 			msg.key_len = snprintf(msg.key, sizeof(msg.key), "%s %s", type_str, param_name(param));
 			size_t msg_size = sizeof(msg) - sizeof(msg.key) + msg.key_len;
 
-			/* copy parameter value directly to buffer */
+			// copy parameter value directly to buffer
 			switch (type) {
 			case PARAM_TYPE_INT32:
 				param_get(param, (int32_t*)&buffer[msg_size]);
@@ -1952,7 +1986,7 @@ void Logger::write_changed_parameters()
 			}
 			msg_size += value_size;
 
-			/* msg_size is now 1 (msg_type) + 2 (msg_size) + 1 (key_len) + key_len + value_size */
+			// msg_size is now 1 (msg_type) + 2 (msg_size) + 1 (key_len) + key_len + value_size
 			msg.msg_size = msg_size - ULOG_MSG_HEADER_LEN;
 
 			write_message(buffer, msg_size);
@@ -1977,7 +2011,7 @@ int Logger::check_free_space()
 		max_log_dirs_to_keep = INT32_MAX;
 	}
 
-	/* remove old logs if the free space falls below a threshold */
+	// remove old logs if the free space falls below a threshold
 	do {
 		if (statfs(LOG_ROOT, &statfs_buf) != 0) {
 			return PX4_ERROR;
@@ -2070,7 +2104,7 @@ int Logger::check_free_space()
 			break;
 		}
 
-		PX4_WARN("removing log directory %s to get more space (left=%u MiB)", directory_to_delete,
+		PX4_INFO("removing log directory %s to get more space (left=%u MiB)", directory_to_delete,
 			 (unsigned int)(statfs_buf.f_bavail / 1024U * statfs_buf.f_bsize / 1024U));
 
 		if (remove_directory(directory_to_delete)) {

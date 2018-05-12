@@ -52,7 +52,7 @@
 #include <px4_workqueue.h>
 #include <systemlib/systemlib.h>
 #include <systemlib/err.h>
-#include <systemlib/param/param.h>
+#include <parameters/param.h>
 #include <systemlib/mavlink_log.h>
 
 #include <uORB/uORB.h>
@@ -169,7 +169,7 @@ private:
 	bool			_one_shot;
 	bool			_test_shot;
 	bool 			_turning_on;
-	math::Vector<2>		_last_shoot_position;
+	matrix::Vector2f	_last_shoot_position;
 	bool			_valid_position;
 
 	int			_command_sub;
@@ -310,7 +310,7 @@ CameraTrigger::CameraTrigger() :
 	     _camera_interface_mode == CAMERA_INTERFACE_MODE_SEAGULL_MAP2_PWM)) {
 		_activation_time = 40.0f;
 		PX4_WARN("Trigger interval too low for PWM interface, setting to 40 ms");
-		param_set(_p_activation_time, &(_activation_time));
+		param_set_no_notification(_p_activation_time, &(_activation_time));
 	}
 
 	// Advertise critical publishers here, because we cannot advertise in interrupt context
@@ -366,7 +366,7 @@ CameraTrigger::update_distance()
 		if (local.xy_valid) {
 
 			// Initialize position if not done yet
-			math::Vector<2> current_position(local.x, local.y);
+			matrix::Vector2f current_position(local.x, local.y);
 
 			if (!_valid_position) {
 				// First time valid position, take first shot
@@ -376,7 +376,7 @@ CameraTrigger::update_distance()
 			}
 
 			// Check that distance threshold is exceeded
-			if ((_last_shoot_position - current_position).length() >= _distance) {
+			if (matrix::Vector2f(_last_shoot_position - current_position).length() >= _distance) {
 				shoot_once();
 				_last_shoot_position = current_position;
 
@@ -588,7 +588,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 
 			if (cmd.param1 > 0.0f) {
 				trig->_distance = cmd.param1;
-				param_set(trig->_p_distance, &(trig->_distance));
+				param_set_no_notification(trig->_p_distance, &(trig->_distance));
 
 				trig->_trigger_enabled = true;
 				trig->_trigger_paused = false;
@@ -604,7 +604,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 			if (cmd.param2 > 0.0f) {
 				if (trig->_camera_interface_mode == CAMERA_INTERFACE_MODE_GPIO) {
 					trig->_activation_time = cmd.param2;
-					param_set(trig->_p_activation_time, &(trig->_activation_time));
+					param_set_no_notification(trig->_p_activation_time, &(trig->_activation_time));
 				}
 			}
 
@@ -622,14 +622,14 @@ CameraTrigger::cycle_trampoline(void *arg)
 
 			if (cmd.param1 > 0.0f) {
 				trig->_interval = cmd.param1;
-				param_set(trig->_p_interval, &(trig->_interval));
+				param_set_no_notification(trig->_p_interval, &(trig->_interval));
 			}
 
 			// We can only control the shutter integration time of the camera in GPIO mode
 			if (cmd.param2 > 0.0f) {
 				if (trig->_camera_interface_mode == CAMERA_INTERFACE_MODE_GPIO) {
 					trig->_activation_time = cmd.param2;
-					param_set(trig->_p_activation_time, &(trig->_activation_time));
+					param_set_no_notification(trig->_p_activation_time, &(trig->_activation_time));
 				}
 			}
 

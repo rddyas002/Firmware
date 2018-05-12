@@ -53,7 +53,7 @@
 #include <drivers/drv_airspeed.h>
 #include <uORB/topics/differential_pressure.h>
 #include <systemlib/mavlink_log.h>
-#include <systemlib/param/param.h>
+#include <parameters/param.h>
 #include <systemlib/err.h>
 #include <systemlib/airspeed.h>
 
@@ -173,6 +173,14 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 			}
 
 			px4_close(fd_scale);
+		}
+
+		// Prevent a completely zero param
+		// since this is used to detect a missing calibration
+		// This value is numerically down in the noise and has
+		// no effect on the sensor performance.
+		if (fabsf(diff_pres_offset) < 0.00000001f) {
+			diff_pres_offset = 0.00000001f;
 		}
 
 		if (param_set(param_find("SENS_DPRES_OFF"), &(diff_pres_offset))) {

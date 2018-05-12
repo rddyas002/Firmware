@@ -414,36 +414,6 @@ PARAM_DEFINE_FLOAT(FW_YR_FF, 0.3f);
 PARAM_DEFINE_FLOAT(FW_WR_FF, 0.2f);
 
 /**
- * Minimal speed for yaw coordination
- *
- * For airspeeds above this value, the yaw rate is calculated for a coordinated
- * turn. Set to a very high value to disable.
- *
- * @unit m/s
- * @min 0.0
- * @max 1000.0
- * @decimal 1
- * @increment 0.5
- * @group FW Attitude Control
- */
-PARAM_DEFINE_FLOAT(FW_YCO_VMIN, 1000.0f);
-
-/**
- * Method used for yaw coordination
- *
- * The param value sets the method used to calculate the yaw rate
- * 0: open-loop zero lateral acceleration based on kinematic constraints
- * 1: closed-loop: try to reduce lateral acceleration to 0 by measuring the acceleration
- *
- * @min 0
- * @max 1
- * @value 0 open-loop
- * @value 1 closed-loop
- * @group FW Attitude Control
- */
-PARAM_DEFINE_INT32(FW_YCO_METHOD, 0);
-
-/**
  * Roll setpoint offset
  *
  * An airframe specific offset of the roll setpoint in degrees, the value is
@@ -528,12 +498,13 @@ PARAM_DEFINE_FLOAT(FW_FLAPS_SCL, 1.0f);
 PARAM_DEFINE_FLOAT(FW_FLAPERON_SCL, 0.0f);
 
 /**
- * Disable airspeed sensor
+ * Airspeed mode
  *
  * For small wings or VTOL without airspeed sensor this parameter can be used to
  * enable flying without an airspeed reading
  *
- * @boolean
+ * @value 0 Normal (use airspeed if available)
+ * @value 1 Airspeed disabled
  * @group FW Attitude Control
  */
 PARAM_DEFINE_INT32(FW_ARSP_MODE, 0);
@@ -647,3 +618,107 @@ PARAM_DEFINE_FLOAT(FW_ACRO_Z_MAX, 45);
  * @group FW Attitude Control
  */
 PARAM_DEFINE_FLOAT(FW_RATT_TH, 0.8f);
+
+/**
+* Roll trim increment at minimum airspeed
+*
+* This increment is added to TRIM_ROLL when airspeed is FW_AIRSPD_MIN.
+ *
+ * @group FW Attitude Control
+ * @min -0.25
+ * @max 0.25
+ * @decimal 2
+ * @increment 0.01
+ */
+PARAM_DEFINE_FLOAT(FW_DTRIM_R_VMIN, 0.0f);
+
+/**
+* Pitch trim increment at minimum airspeed
+*
+* This increment is added to TRIM_PITCH when airspeed is FW_AIRSPD_MIN.
+ *
+ * @group FW Attitude Control
+ * @min -0.25
+ * @max 0.25
+ * @decimal 2
+ * @increment 0.01
+ */
+PARAM_DEFINE_FLOAT(FW_DTRIM_P_VMIN, 0.0f);
+
+/**
+* Yaw trim increment at minimum airspeed
+*
+* This increment is added to TRIM_YAW when airspeed is FW_AIRSPD_MIN.
+ *
+ * @group FW Attitude Control
+ * @min -0.25
+ * @max 0.25
+ * @decimal 2
+ * @increment 0.01
+ */
+PARAM_DEFINE_FLOAT(FW_DTRIM_Y_VMIN, 0.0f);
+
+/**
+* Roll trim increment at maximum airspeed
+*
+* This increment is added to TRIM_ROLL when airspeed is FW_AIRSP_MAX.
+ *
+ * @group FW Attitude Control
+ * @min -0.25
+ * @max 0.25
+ * @decimal 2
+ * @increment 0.01
+ */
+PARAM_DEFINE_FLOAT(FW_DTRIM_R_VMAX, 0.0f);
+
+/**
+* Pitch trim increment at maximum airspeed
+*
+* This increment is added to TRIM_PITCH when airspeed is FW_AIRSP_MAX.
+ *
+ * @group FW Attitude Control
+ * @min -0.25
+ * @max 0.25
+ * @decimal 2
+ * @increment 0.01
+ */
+PARAM_DEFINE_FLOAT(FW_DTRIM_P_VMAX, 0.0f);
+
+/**
+* Yaw trim increment at maximum airspeed
+*
+* This increment is added to TRIM_YAW when airspeed is FW_AIRSP_MAX.
+ *
+ * @group FW Attitude Control
+ * @min -0.25
+ * @max 0.25
+ * @decimal 2
+ * @increment 0.01
+ */
+PARAM_DEFINE_FLOAT(FW_DTRIM_Y_VMAX, 0.0f);
+
+/**
+ * Roll trim increment for flaps configuration
+ *
+ * This increment is added to TRIM_ROLL whenever flaps are fully deployed.
+ *
+ * @group FW Attitude Control
+ * @min -0.25
+ * @max 0.25
+ * @decimal 2
+ * @increment 0.01
+ */
+PARAM_DEFINE_FLOAT(FW_DTRIM_R_FLPS, 0.0f);
+
+/**
+ * Pitch trim increment for flaps configuration
+ *
+ * This increment is added to the pitch trim whenever flaps are fully deployed.
+ *
+ * @group FW Attitude Control
+ * @min -0.25
+ * @max 0.25
+ * @decimal 2
+ * @increment 0.01
+ */
+PARAM_DEFINE_FLOAT(FW_DTRIM_P_FLPS, 0.0f);

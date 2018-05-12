@@ -94,7 +94,7 @@
 #define PX4_MAIN_FUNCTION(_prefix) int _prefix##_task_main(int argc, char *argv[])
 
 /* Parameter handle datatype */
-#include <systemlib/param/param.h>
+#include <parameters/param.h>
 typedef param_t px4_param_t;
 
 /* Get value of parameter by name */
@@ -152,7 +152,9 @@ using ::isfinite;
  ****************************************************************************/
 
 // Flag is meaningless on Linux
+#ifndef O_BINARY
 #define O_BINARY 0
+#endif
 
 // mode for open with O_CREAT
 #define PX4_O_MODE_777 (S_IRWXU | S_IRWXG | S_IRWXO)

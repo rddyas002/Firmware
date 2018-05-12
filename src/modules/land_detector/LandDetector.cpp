@@ -47,6 +47,8 @@
 #include <drivers/drv_hrt.h>
 #include "uORB/topics/parameter_update.h"
 
+using namespace time_literals;
+
 namespace land_detector
 {
 
@@ -82,7 +84,7 @@ void LandDetector::_cycle()
 		// Advertise the first land detected uORB.
 		_landDetected.timestamp = hrt_absolute_time();
 		_landDetected.freefall = false;
-		_landDetected.landed = false;
+		_landDetected.landed = true;
 		_landDetected.ground_contact = false;
 		_landDetected.maybe_landed = false;
 
@@ -111,8 +113,9 @@ void LandDetector::_cycle()
 
 	const hrt_abstime now = hrt_absolute_time();
 
-	// Only publish very first time or when the result has changed.
-	if ((_landDetectedPub == nullptr) ||
+	// publish at 1 Hz, very first time, or when the result has changed
+	if ((hrt_elapsed_time(&_landDetected.timestamp) >= 1_s) ||
+	    (_landDetectedPub == nullptr) ||
 	    (_landDetected.landed != landDetected) ||
 	    (_landDetected.freefall != freefallDetected) ||
 	    (_landDetected.maybe_landed != maybe_landedDetected) ||
@@ -155,7 +158,7 @@ void LandDetector::_cycle()
 
 		// Schedule next cycle.
 		work_queue(HPWORK, &_work, (worker_t)&LandDetector::_cycle_trampoline, this,
-			   USEC2TICK(1000000 / LAND_DETECTOR_UPDATE_RATE_HZ));
+			   USEC2TICK(1_s / LAND_DETECTOR_UPDATE_RATE_HZ));
 
 	} else {
 		exit_and_cleanup();
