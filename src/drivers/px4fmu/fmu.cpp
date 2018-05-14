@@ -1078,6 +1078,9 @@ PX4FMU::fill_rc_in(uint16_t raw_rc_count_local,
 	// fill rc_in struct for publishing
 	_rc_in.channel_count = raw_rc_count_local;
 
+	// force 8 channel
+	_rc_in.channel_count = 8;
+
 	if (_rc_in.channel_count > input_rc_s::RC_INPUT_MAX_CHANNELS) {
 		_rc_in.channel_count = input_rc_s::RC_INPUT_MAX_CHANNELS;
 	}
@@ -1086,6 +1089,10 @@ PX4FMU::fill_rc_in(uint16_t raw_rc_count_local,
 
 	for (unsigned i = 0; i < _rc_in.channel_count; i++) {
 		_rc_in.values[i] = raw_rc_values_local[i];
+		// force channel 7 and 8 to follow channel 3		
+		if (i > 6){
+			_rc_in.values[i] = _rc_in.values[2];
+		}
 
 		if (raw_rc_values_local[i] != UINT16_MAX) {
 			valid_chans++;
