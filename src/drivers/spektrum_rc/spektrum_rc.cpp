@@ -168,7 +168,9 @@ void fill_input_rc(uint16_t raw_rc_count, uint16_t raw_rc_values[input_rc_s::RC_
 {
 	input_rc.input_source = input_rc_s::RC_INPUT_SOURCE_QURT;
 
-	input_rc.channel_count = raw_rc_count;
+	// Force 8 channel radio with channel 8 equivalent to channel 3 and set channel 7 to 0
+	// input_rc.channel_count = raw_rc_count;
+	input_rc.channel_count = 8;
 
 	if (input_rc.channel_count > input_rc_s::RC_INPUT_MAX_CHANNELS) {
 		input_rc.channel_count = input_rc_s::RC_INPUT_MAX_CHANNELS;
@@ -183,6 +185,13 @@ void fill_input_rc(uint16_t raw_rc_count, uint16_t raw_rc_values[input_rc_s::RC_
 			valid_chans++;
 		}
 	}
+
+	// set channel 8 to channel 3
+	input_rc.values[7] = input_rc.values[2];
+	valid_chans++;
+	// set channel 7 to 0
+	input_rc.values[6] = 0;
+	valid_chans++;
 
 	input_rc.timestamp = now;
 	input_rc.timestamp_last_signal = input_rc.timestamp;
