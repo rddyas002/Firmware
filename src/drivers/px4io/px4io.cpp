@@ -1757,6 +1757,9 @@ PX4IO::io_get_raw_rc_input(rc_input_values &input_rc)
 	 * channel count once.
 	 */
 	channel_count = regs[PX4IO_P_RAW_RC_COUNT];
+	
+	// force 8 channel radio 
+	channel_count = 8;
 
 	/* limit the channel count */
 	if (channel_count > input_rc_s::RC_INPUT_MAX_CHANNELS) {
@@ -1814,6 +1817,9 @@ PX4IO::io_get_raw_rc_input(rc_input_values &input_rc)
 	for (unsigned i = 0; i < channel_count; i++) {
 		input_rc.values[i] = regs[prolog + i];
 	}
+	
+	// override channel 8 to equal channel 3
+	input_rc.values[7] = input_rc.values[2];
 
 	/* get RSSI from input channel */
 	if (_rssi_pwm_chan > 0 && _rssi_pwm_chan <= input_rc_s::RC_INPUT_MAX_CHANNELS && _rssi_pwm_max - _rssi_pwm_min != 0) {
